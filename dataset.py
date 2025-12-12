@@ -643,6 +643,25 @@ class DataSet(torch.utils.data.Dataset):
         # remove first element (0,..,0) as one attribute always has to be fixed
         fixed_vectors.pop(0)
         return fixed_vectors
+    
+    def get_fixed_vectors_hierarchical(properties_dim):
+        """
+        Returns the fixed vectors that respect the Hawkins et al. (2018) hierarchy.
+        Fixed vectors are binary strings in which a 1 denotes that the attribute at that position is relevant.
+        In a strictly hierarchical taxonomy only suffixes of ones (…, 0, 0, 1, 1, 1) are allowed because every
+        additional attribute refines the same branch.
+        """
+        n_attributes = len(properties_dim)
+        if n_attributes == 0:
+            return []
+
+        hierarchical_vectors = []
+        # Start with the most generic concept (only the last attribute is fixed) and progressively refine it.
+        vector = [0] * n_attributes
+        for attr_idx in range(n_attributes - 1, -1, -1):
+            vector[attr_idx] = 1
+            hierarchical_vectors.append(tuple(vector))
+        return hierarchical_vectors
 
     @staticmethod
     def get_all_objects_for_a_concept(properties_dim, features, fixed):
