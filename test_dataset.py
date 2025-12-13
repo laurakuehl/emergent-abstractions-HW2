@@ -161,6 +161,21 @@ class TestDataset(unittest.TestCase):
                                     count_mismatch += 1
                             self.assertEqual(len(relevant_indices) - n_same, count_mismatch)
 
+    def test_dataset_structure_switch(self):
+        """Ensure dataset_structure flag switches between flat and hierarchical concepts."""
+        props = [3, 3, 3]
+        ds_flat = DataSet(props, game_size=1, scaling_factor=1, device='cpu', testing=True,
+                          dataset_structure='flat')
+        ds_hier = DataSet(props, game_size=1, scaling_factor=1, device='cpu', testing=True,
+                          dataset_structure='hierarchical')
+        n_atts = len(props)
+        n_vals = props[0]
+        expected_flat = sum(math.comb(n_atts, i) * (n_vals ** i) for i in range(1, n_atts + 1))
+        expected_hier = sum(n_vals ** i for i in range(1, n_atts + 1))
+        self.assertEqual(len(ds_flat.concepts), expected_flat)
+        self.assertEqual(len(ds_hier.concepts), expected_hier)
+        self.assertTrue(len(ds_hier.concepts) < len(ds_flat.concepts))
+
 
 #    def test_get_dataset(self):
 #        pass
