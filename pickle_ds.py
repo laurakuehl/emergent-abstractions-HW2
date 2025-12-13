@@ -26,6 +26,8 @@ parser.add_argument('--granularity', type=str, default='mixed',
                     help='Granularity of the context. Possible values: mixed, coarse and fine')
 parser.add_argument('--shared_context', type=bool, default=False,
                     help="If true, context is generated with specific shared attributes instead of all possible.")
+parser.add_argument('--dataset_structure', type=str, default='flat', choices=['flat', 'hierarchical'],
+                    help="Structure of concept space. flat=all non-zero concepts, hierarchical=suffix-of-ones chain.")
 
 args = parser.parse_args()
 
@@ -48,7 +50,8 @@ if not args.zero_shot:
                        device='cpu',
                        sample_context=args.sample_context,
                        granularity=args.granularity,
-                       shared_context=args.shared_context)
+                       shared_context=args.shared_context,
+                       dataset_structure=args.dataset_structure)
 
     if data_set.granularity == 'mixed' or data_set.granularity == None:
         path = ('data/dim(' + str(len(args.dimensions)) + ',' + str(args.dimensions[0]) + ')' + sample + '_sf' +
@@ -74,7 +77,9 @@ else:
                                sample_context=args.sample_context,
                                zero_shot=True,
                                zero_shot_test=cond,
-                               granularity=args.granularity)
+                               granularity=args.granularity,
+                               shared_context=args.shared_context,
+                               dataset_structure=args.dataset_structure)
             if data_set.granularity == 'mixed' or data_set.granularity == None:
                 path = ('data/dim(' + str(len(args.dimensions)) + ',' + str(args.dimensions[0]) + ')' + sample + '_' +
                         str(cond) + '_sf' + str(args.scaling_factor) + '.ds')
@@ -91,7 +96,9 @@ else:
                            sample_context=args.sample_context,
                            zero_shot=True,
                            zero_shot_test=args.zero_shot_test,
-                           granularity=args.granularity)
+                           granularity=args.granularity,
+                           shared_context=args.shared_context,
+                           dataset_structure=args.dataset_structure)
 
         if data_set.granularity == 'mixed' or data_set.granularity == None:
             path = ('data/dim(' + str(len(args.dimensions)) + ',' + str(args.dimensions[0]) + ')' + sample + '_' +

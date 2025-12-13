@@ -69,6 +69,8 @@ def get_params(params):
                         help="Specifies the device for tensor computations. Defaults to 'cuda'.")
     parser.add_argument('--path', type=str, default="",
                         help="Path where to save the results - needed for running on HPC3.")
+    parser.add_argument('--outdir', type=str, default=None,
+                        help="If set, overrides internal folder structure and saves runs directly to this directory.")
     parser.add_argument('--include_concept', type=bool, default=False,
                         help="Not implemented yet: If set to True, then full concepts will be created and preserved during training (opposed to preserving only targets and regenerating concepts after training)")
     parser.add_argument('--context_unaware', type=bool, default=False,
@@ -124,6 +126,8 @@ def get_params(params):
                         help="Determines whether 3dshapes dataset will be used or not")
     parser.add_argument('--shared_context', type=bool, default=False,
                         help='Use for generating datasets with a shared context.')
+    parser.add_argument('--dataset_structure', type=str, default='flat', choices=['flat', 'hierarchical'],
+                        help='Structure of concept space. flat=all non-zero binary masks, hierarchical=suffix-of-ones.')
 
     args = core.init(parser, params)
 
@@ -154,11 +158,16 @@ def train(opts, datasets, verbose_callbacks=False):
     Train function completely copied from hierarchical_reference_game.
     """
 
+    disable_run_subdir = getattr(opts, 'disable_run_subdir', False)
     if opts.save:
+        os.makedirs(opts.game_path, exist_ok=True)
         if not opts.test_rsa and not opts.save_test_interactions and not opts.zero_shot:
             # make folder for new run
-            latest_run = len(os.listdir(opts.game_path))
-            opts.save_path = os.path.join(opts.game_path, str(latest_run))
+            if disable_run_subdir:
+                opts.save_path = opts.game_path
+            else:
+                latest_run = len(os.listdir(opts.game_path))
+                opts.save_path = os.path.join(opts.game_path, str(latest_run))
         if not os.path.exists(opts.save_path):
             os.makedirs(opts.save_path)
         if not opts.save_test_interactions:
@@ -385,6 +394,8 @@ def main(params):
     folder_name = (data_set_name + '_game_size_' + str(opts.game_size)
                    + '_vsf_' + str(opts.vocab_size_factor))
     folder_name = os.path.join("results", folder_name)
+    use_custom_outdir = opts.outdir is not None
+    opts.disable_run_subdir = use_custom_outdir
 
     # define game setting from args
     if opts.context_unaware:
@@ -408,14 +419,17 @@ def main(params):
 
     # create subfolders if necessary
     # The granularity subfolders are created only when the granularity is not 'mixed'
-    if opts.granularity != 'mixed' and not opts.zero_shot and not opts.test_rsa:
-        granularity_subfolder = f"granularity_{opts.granularity}"
-        opts.game_path = os.path.join(opts.path, folder_name, opts.game_setting, granularity_subfolder)
-    elif opts.sample_context and not opts.zero_shot:
-        sample_context_subfolder = "sampled_context"
-        opts.game_path = os.path.join(opts.path, folder_name, opts.game_setting, sample_context_subfolder)
+    if use_custom_outdir:
+        opts.game_path = opts.outdir
     else:
-        opts.game_path = os.path.join(opts.path, folder_name, opts.game_setting)
+        if opts.granularity != 'mixed' and not opts.zero_shot and not opts.test_rsa:
+            granularity_subfolder = f"granularity_{opts.granularity}"
+            opts.game_path = os.path.join(opts.path, folder_name, opts.game_setting, granularity_subfolder)
+        elif opts.sample_context and not opts.zero_shot:
+            sample_context_subfolder = "sampled_context"
+            opts.game_path = os.path.join(opts.path, folder_name, opts.game_setting, sample_context_subfolder)
+        else:
+            opts.game_path = os.path.join(opts.path, folder_name, opts.game_setting)
     opts.save_path = opts.game_path  # Keep game path for calculating which run, i.e. folder to save in
 
     # if name of precreated data set is given, load dataset
@@ -428,6 +442,8 @@ def main(params):
                 os.makedirs(opts.save_path)
 
     for run in range(opts.num_of_runs):
+        def run_dir(base_path):
+            return base_path if use_custom_outdir else os.path.join(base_path, str(run))
 
         # if not given, generate data set (new for each run for the small datasets)
         if not opts.load_dataset and not opts.zero_shot:
@@ -440,10 +456,11 @@ def main(params):
                                            device=opts.device,
                                            sample_context=opts.sample_context,
                                            granularity=opts.granularity,
-                                           shared_context=opts.shared_context)
+                                           shared_context=opts.shared_context,
+                                           dataset_structure=opts.dataset_structure)
 
             # save folder for opts rsa is already specified above
-            if not opts.test_rsa and not opts.save_test_interactions:
+            if not opts.test_rsa and not opts.save_test_interactions and not use_custom_outdir:
                 opts.save_path = os.path.join(opts.path, folder_name, opts.game_setting)
             # create subfolder if necessary
             if not os.path.exists(opts.save_path) and opts.save:
@@ -452,7 +469,7 @@ def main(params):
         if not opts.zero_shot:
             # set checkpoint path
             if opts.load_checkpoint:
-                opts.checkpoint_path = os.path.join(opts.game_path, str(run), 'final.tar')
+                opts.checkpoint_path = os.path.join(run_dir(opts.game_path), 'final.tar')
                 if not os.path.exists(opts.checkpoint_path):
                     raise ValueError(
                         f"Checkpoint file {opts.checkpoint_path} not found.")
@@ -460,7 +477,7 @@ def main(params):
             # set interaction path
             if opts.load_interaction:
                 if opts.early_stopping:
-                    path_to_run = os.path.join(opts.game_path, str(run))
+                    path_to_run = run_dir(opts.game_path)
                     with open(os.path.join(path_to_run, 'loss_and_metrics.pkl'), 'rb') as input_file:
                         data = pickle.load(input_file)
                         final_epoch = max(data['loss_train'].keys())
@@ -469,11 +486,11 @@ def main(params):
                         n_epoch = 0
                     else:
                         n_epoch = final_epoch
-                    opts.interaction_path = os.path.join(opts.game_path, str(run), 'interactions', opts.load_interaction,
+                    opts.interaction_path = os.path.join(run_dir(opts.game_path), 'interactions', opts.load_interaction,
                                                          'epoch_' +
                                                          str(n_epoch), 'interaction_gpu0')
                 else:
-                    opts.interaction_path = os.path.join(opts.game_path, str(run), 'interactions',
+                    opts.interaction_path = os.path.join(run_dir(opts.game_path), 'interactions',
                                                          opts.load_interaction,
                                                          'epoch_' +
                                                          str(opts.n_epochs), 'interaction_gpu0')
@@ -483,7 +500,8 @@ def main(params):
             # if opts.test_rsa == 'train' or opts.test_rsa == 'validation' or opts.test_rsa == 'test':
             if opts.test_rsa:
                 # create subfolder if necessary
-                opts.save_path = os.path.join(opts.game_path, str(run))
+                if not use_custom_outdir:
+                    opts.save_path = run_dir(opts.game_path)
                 if not os.path.exists(opts.save_path) and opts.save:
                     os.makedirs(opts.save_path)
             # else:
@@ -492,13 +510,22 @@ def main(params):
         if opts.save_test_interactions:
             # create subfolder if necessary
             if opts.zero_shot:
-                opts.save_interactions_path = os.path.join(opts.game_path, 'zero_shot',
-                                                  opts.zero_shot_test, str(run), "interactions")
-                opts.save_path = os.path.join(opts.game_path, 'zero_shot', opts.zero_shot_test, str(run))
+                if use_custom_outdir:
+                    opts.save_interactions_path = os.path.join(opts.game_path, "interactions")
+                else:
+                    zero_shot_base = os.path.join(opts.game_path, 'zero_shot', opts.zero_shot_test)
+                    opts.save_interactions_path = os.path.join(run_dir(zero_shot_base), "interactions")
+                    opts.save_path = run_dir(zero_shot_base)
             elif opts.test_rsa:
-                opts.save_interactions_path = os.path.join(opts.game_path, str(run), 'interactions')
+                if use_custom_outdir:
+                    opts.save_interactions_path = os.path.join(opts.game_path, 'interactions')
+                else:
+                    opts.save_interactions_path = os.path.join(run_dir(opts.game_path), 'interactions')
             else:
-                opts.save_interactions_path = os.path.join(opts.game_path, str(run), 'interactions')
+                if use_custom_outdir:
+                    opts.save_interactions_path = os.path.join(opts.game_path, 'interactions')
+                else:
+                    opts.save_interactions_path = os.path.join(run_dir(opts.game_path), 'interactions')
             if not os.path.exists(opts.save_interactions_path) and opts.save:
                 os.makedirs(opts.save_interactions_path)
 
@@ -506,16 +533,19 @@ def main(params):
         if opts.zero_shot:
             # either the zero-shot test condition is given (with pre-generated dataset)
             if opts.zero_shot_test is not None:
-                if not opts.save_test_interactions:
+                if use_custom_outdir:
+                    opts.zs_game_path = opts.game_path
+                else:
                     opts.zs_game_path = os.path.join(opts.game_path, 'zero_shot', opts.zero_shot_test)
-                    # create subfolder if necessary
-                    if opts.granularity != 'mixed':
-                        granularity_subfolder = f"granularity_{opts.granularity}"
-                        opts.save_path = os.path.join(opts.zs_game_path, granularity_subfolder, str(run))
-                    elif opts.sample_context:
-                        opts.save_path = os.path.join(opts.zs_game_path, "sampled_context", str(run))
-                    elif opts.granularity == 'mixed' and not opts.sample_context:
-                        opts.save_path = os.path.join(opts.zs_game_path, str(run))
+                    if not opts.save_test_interactions:
+                        # create subfolder if necessary
+                        if opts.granularity != 'mixed':
+                            granularity_subfolder = f"granularity_{opts.granularity}"
+                            opts.save_path = run_dir(os.path.join(opts.zs_game_path, granularity_subfolder))
+                        elif opts.sample_context:
+                            opts.save_path = run_dir(os.path.join(opts.zs_game_path, "sampled_context"))
+                        elif opts.granularity == 'mixed' and not opts.sample_context:
+                            opts.save_path = run_dir(opts.zs_game_path)
 
                 if not os.path.exists(opts.save_path) and opts.save:
                     os.makedirs(opts.save_path)
@@ -530,21 +560,26 @@ def main(params):
                                                    zero_shot=True,
                                                    zero_shot_test=opts.zero_shot_test,
                                                    sample_context=opts.sample_context,
-                                                   granularity=opts.granularity)
+                                                   granularity=opts.granularity,
+                                                   shared_context=opts.shared_context,
+                                                   dataset_structure=opts.dataset_structure)
             # or both test conditions are generated        
             else:
                 # implement two zero-shot conditions: test on most generic vs. test on most specific dataset
                 for cond in ['generic', 'specific']:
                     print("Zero-shot condition:", cond)
-                    # create subfolder if necessary
-                    opts.zs_game_path = os.path.join(opts.game_path, 'zero_shot', cond)
-                    if opts.granularity != 'mixed':
-                        granularity_subfolder = f"granularity_{opts.granularity}"
-                        opts.save_path = os.path.join(opts.zs_game_path, granularity_subfolder, str(run))
-                    elif opts.sample_context:
-                        opts.save_path = os.path.join(opts.zs_game_path, "context_sampled", str(run))
-                    if not os.path.exists(opts.save_path) and opts.save:
-                        os.makedirs(opts.save_path)
+                    if use_custom_outdir:
+                        opts.zs_game_path = opts.game_path
+                    else:
+                        # create subfolder if necessary
+                        opts.zs_game_path = os.path.join(opts.game_path, 'zero_shot', cond)
+                        if opts.granularity != 'mixed':
+                            granularity_subfolder = f"granularity_{opts.granularity}"
+                            opts.save_path = run_dir(os.path.join(opts.zs_game_path, granularity_subfolder))
+                        elif opts.sample_context:
+                            opts.save_path = run_dir(os.path.join(opts.zs_game_path, "context_sampled"))
+                        if not os.path.exists(opts.save_path) and opts.save:
+                            os.makedirs(opts.save_path)
                     if opts.shapes3d:
                         data_set = load_or_create_dataset('./dataset/feat_rep_zero_concept_dataset')
                     else:
@@ -555,7 +590,9 @@ def main(params):
                                                    zero_shot=True,
                                                    zero_shot_test=cond,
                                                    sample_context=opts.sample_context,
-                                                   granularity=opts.granularity)
+                                                   granularity=opts.granularity,
+                                                   shared_context=opts.shared_context,
+                                                   dataset_structure=opts.dataset_structure)
                     train(opts, data_set, verbose_callbacks=False)
 
             # set checkpoint path
@@ -569,10 +606,13 @@ def main(params):
             if opts.load_interaction:
                 if opts.early_stopping:
                     if opts.zero_shot:
-                        opts.zs_game_path = os.path.join(opts.game_path, 'zero_shot', opts.zero_shot_test)
-                        path_to_run = os.path.join(opts.zs_game_path, str(run))
+                        if use_custom_outdir:
+                            opts.zs_game_path = opts.game_path
+                        else:
+                            opts.zs_game_path = os.path.join(opts.game_path, 'zero_shot', opts.zero_shot_test)
+                        path_to_run = run_dir(opts.zs_game_path)
                     else:
-                        path_to_run = os.path.join(opts.game_path, str(run))
+                        path_to_run = run_dir(opts.game_path)
                     with open(os.path.join(path_to_run, 'loss_and_metrics.pkl'), 'rb') as input_file:
                         data = pickle.load(input_file)
                         final_epoch = max(data['loss_train'].keys())
@@ -582,24 +622,27 @@ def main(params):
                     else:
                         n_epoch = final_epoch
                     if opts.zero_shot:
-                        opts.interaction_path = os.path.join(opts.zs_game_path, str(run), 'interactions',
+                        opts.interaction_path = os.path.join(run_dir(opts.zs_game_path), 'interactions',
                                                              opts.load_interaction,
                                                              'epoch_' +
                                                              str(n_epoch), 'interaction_gpu0')
                     else:
-                        opts.interaction_path = os.path.join(opts.game_path, str(run), 'interactions',
+                        opts.interaction_path = os.path.join(run_dir(opts.game_path), 'interactions',
                                                              opts.load_interaction,
                                                              'epoch_' +
                                                              str(n_epoch), 'interaction_gpu0')
                 else:
                     if opts.zero_shot:
-                        opts.zs_game_path = os.path.join(opts.game_path, 'zero_shot', opts.zero_shot_test)
-                        opts.interaction_path = os.path.join(opts.zs_game_path, str(run), 'interactions',
+                        if use_custom_outdir:
+                            opts.zs_game_path = opts.game_path
+                        else:
+                            opts.zs_game_path = os.path.join(opts.game_path, 'zero_shot', opts.zero_shot_test)
+                        opts.interaction_path = os.path.join(run_dir(opts.zs_game_path), 'interactions',
                                                              opts.load_interaction,
                                                              'epoch_' +
                                                              str(opts.n_epochs), 'interaction_gpu0')
                     else:
-                        opts.interaction_path = os.path.join(opts.game_path, str(run), 'interactions',
+                        opts.interaction_path = os.path.join(run_dir(opts.game_path), 'interactions',
                                                              opts.load_interaction,
                                                              'epoch_' +
                                                              str(opts.n_epochs), 'interaction_gpu0')

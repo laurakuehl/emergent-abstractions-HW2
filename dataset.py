@@ -19,7 +19,7 @@ class DataSet(torch.utils.data.Dataset):
 
     def __init__(self, properties_dim=[3, 3, 3], game_size=10, scaling_factor=10, device='cuda', testing=False,
                  zero_shot=False, zero_shot_test=None, sample_context=False, granularity="mixed", is_shapes3d=False,
-                 images=[], labels=[], shared_context=False):
+                 images=[], labels=[], shared_context=False, dataset_structure='flat'):
         """
         properties_dim: vector that defines how many attributes and features per attributes the dataset should contain,
         defaults to a 3x3x3 dataset
@@ -34,6 +34,10 @@ class DataSet(torch.utils.data.Dataset):
         self.sample_context = sample_context
         self.granularity = granularity
         self.shared_context = shared_context
+        valid_structures = ["flat", "hierarchical"]
+        if dataset_structure not in valid_structures:
+            raise ValueError(f"dataset_structure must be one of {valid_structures}, got {dataset_structure}")
+        self.dataset_structure = dataset_structure
 
         # check if granularity has one of the allowed values
         if granularity not in ["mixed", "fine", "coarse"]:
@@ -490,7 +494,7 @@ class DataSet(torch.utils.data.Dataset):
             objects: a list with all object-tuples that satisfy the concept
             fixed: a tuple that denotes how many and which attributes are fixed
         """
-        fixed_vectors = self.get_fixed_vectors(self.properties_dim)
+        fixed_vectors = self._get_fixed_vectors_for_structure(self.properties_dim)
         # create all possible concepts
         all_fixed_object_pairs = list(itertools.product(self.all_objects, fixed_vectors))
 
@@ -644,6 +648,13 @@ class DataSet(torch.utils.data.Dataset):
         fixed_vectors.pop(0)
         return fixed_vectors
     
+    def _get_fixed_vectors_for_structure(self, properties_dim):
+        """Return fixed vectors according to requested dataset structure."""
+        if self.dataset_structure == 'hierarchical':
+            return self.get_fixed_vectors_hierarchical(properties_dim)
+        return self.get_fixed_vectors(properties_dim)
+
+    @staticmethod
     def get_fixed_vectors_hierarchical(properties_dim):
         """
         Returns the fixed vectors that respect the Hawkins et al. (2018) hierarchy.
