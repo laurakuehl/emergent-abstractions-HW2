@@ -4,7 +4,6 @@
 *.pyc
 *.tar
 **/interaction*
-*.ds
 grid_search/07-03_new/
 grid_search/07-02/
 grid_search/results_07-03_new.csv
